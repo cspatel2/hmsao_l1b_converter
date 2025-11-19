@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: secondary_straightening
+Version: 0.0.0
+Summary: A module to perform secondary straightening on L1B data.
+Author-email: Charmi Patel <charmi.patel1198@gmail.com>
+Requires-Python: >=3.8
+Requires-Dist: numpy
+Requires-Dist: xarray
+Requires-Dist: scipy
+Requires-Dist: tqdm

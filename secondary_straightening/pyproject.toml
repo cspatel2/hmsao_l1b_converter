@@ -1,0 +1,17 @@
+[project]
+name = "secondary_straightening"
+version = "0.0.0"
+description = "A module to perform secondary straightening on L1B data."
+authors = [
+    { name = "Charmi Patel", email = "charmi.patel1198@gmail.com" }
+]
+requires-python = ">=3.8"
+dependencies = [
+    "numpy",
+    "xarray",
+    "scipy",
+    "tqdm",]
+
+[build-system]
+requires = ["setuptools>= 61.0.0"]
+build-backend = "setuptools.build_meta"
