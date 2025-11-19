@@ -11,6 +11,6 @@ includes: secondary straightening
 
 ## to install secondary_straightening:
 
-```python -m build
-
-```pip install .
+```
+python -m build
+pip install .
