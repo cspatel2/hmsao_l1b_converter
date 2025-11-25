@@ -9,13 +9,12 @@ from secondary_straightening import secondary_straightening
 from matplotlib import pyplot as plt
 from tqdm import tqdm
 # %%
-
-# %%
 ######### user inputs #########
 windows = ['5577', '6300']
-datdir = Path('../data/l1a')
+datdir = Path('/home/charmi/locsststor/proc/hmsao/l1a')
 destdir = '' #if empty string, will replace 'l1a' with 'l1b' in datdir path. If None, will use './l1b' as destdir.
 lineprofile_dir = Path('secondary_straightening')
+# %%
 ##################################
 for win in windows:
     print(f"Processing window: {win}")
@@ -27,7 +26,7 @@ for win in windows:
     destdir.mkdir(exist_ok=True)
     print(f"Destination directory: {destdir}")
     
-    fns = list(datdir.glob(f'**/*{win}*.nc'))
+    fns = list(datdir.glob(f'*/*{win}*.nc'))
     print(f"Found {len(fns)} files to process.")
     fns.sort()
     
@@ -42,7 +41,7 @@ for win in windows:
     else: print("no known data variable found")
 
     for fn in fns:
-        print(f"Processing file: {fn.name}...")
+        print(f"Processing file: {fn.name}...", end='', flush=True)
         ds = xr.open_dataset(fn)
         if id == 'intensity':
             ds = ds.rename({'intensity':'countrate'})
@@ -55,8 +54,11 @@ for win in windows:
         ss.attrs['FileCreationDate'] = datetime.now().strftime("%m/%d/%Y, %H:%M:%S EDT")
         encoding = {var: {'zlib': True}
                         for var in (*ds.data_vars.keys(), *ds.coords.keys())}
-        print('...saving...')
-        outfn = destdir.joinpath(fn.stem.replace('l1a','l1b') + fn.suffix)
+        print('\tsaving...', end='', flush=True)
+        outfn = destdir.joinpath(fn.stem.replace('hmso-aorigin','hmsao_l1b') + fn.suffix)
         ss.to_netcdf(outfn, encoding=encoding)
-        print('...Done.')
+        print('\tDone.', flush=True)
     #
+
+
+# %%
