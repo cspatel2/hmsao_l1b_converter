@@ -1,0 +1,8 @@
+*.sav
+*-data
+*l1a*.nc
+*.png
+hms-aorigin*.nc
+*test_*
+*test.py
+*__pycache__*
