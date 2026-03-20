@@ -13,6 +13,7 @@ from secondary_straightening import secondary_straightening
 from matplotlib import pyplot as plt
 from tqdm import tqdm
 from dataclasses import dataclass
+from scipy.ndimage import gaussian_filter1d
 
 
 #%%
@@ -94,6 +95,7 @@ def main(config: L1BConfig):
         else:
             lp_file = lp_file[0]
         lprof = xr.open_dataset(lp_file)
+        lprof = lprof.assign(line_profile = gaussian_filter1d(lprof.line_profile, sigma = 5)) #gaussian filter 
         
         print(f"Processing window: {win}")
 
