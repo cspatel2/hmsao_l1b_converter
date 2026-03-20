@@ -95,7 +95,8 @@ def main(config: L1BConfig):
         else:
             lp_file = lp_file[0]
         lprof = xr.open_dataset(lp_file)
-        lprof = lprof.assign(line_profile = gaussian_filter1d(lprof.line_profile, sigma = 5)) #gaussian filter 
+        lprof['line_profile'] = lprof['line_profile'] = (lprof.dims, gaussian_filter1d(lprof.line_profile.values, sigma=5)) #smooth line profile with gaussian filter to avoid overfitting to noise in the line profile
+
         
         print(f"Processing window: {win}")
 
