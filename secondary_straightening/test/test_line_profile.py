@@ -1,5 +1,6 @@
 #%%
 from calendar import c
+from curses import window
 from os import error
 from unittest import skip
 
@@ -168,14 +169,16 @@ zaslice = slice(-17,15)
 wlslice = slice(int(win)/10 - 0.1, int(win)/10 + 0.06)
 # wlslice = slice(int(win)/10 - 0.1, int(win)/10 + 0.1)
 #%%
+#########################################################################################
 p = Path('~/locsststor/proc/hmsao-v1/l1a').expanduser()
+win = '6563'
 fns = list(p.glob(f'**/*{win}*.nc'))
 fns.sort()
-ds = xr.open_dataset(fns[3+7])
+ds = xr.open_dataset(fns[0])
 # wlslice = slice(ds.wavelength.min()+1.1, ds.wavelength.max()-1)
 da = ds.countrate.sel(wavelength = wlslice, za = zaslice).sum('tstamp', skipna = True).clip(min=0)
 #%%
-da.isel(za = zaidx).plot()
+da
 #%%
 nda = da.copy()
 nda -= (nda[-1] - nda[0])
@@ -402,16 +405,81 @@ nda.sel(wavelength = winner_slice).isel(za = 70).plot()
 plt.axvline(winner, color = 'g', ls = '--')
 
 # %%
+#########################################################
 win = '6563'
 p = Path('~/locsststor/proc/hmsao-v1/l1a').expanduser()
 fns = list(p.glob(f'**/*{win}*.nc'))
 fns.sort()
 ds = xr.open_dataset(fns[3+7])
 # %%
-da =ds.countrate.sel(za = slice(-17,15)).isel(tstamp = 50)
+wlslice = slice(ds.wavelength.min()+1.1, ds.wavelength.max()-.9)
+da =ds.countrate.sel(za = slice(-17,15), wavelength = wlslice).isel(tstamp = 50)
 # %%
 da.plot()
 # 
 # %%
 da.sum('za').plot()
+# %%
+## remove continuum
+q = da.sum('za').quantile(0.4, dim="wavelength")
+mask = da.sum('za') >= q
+masked = da.sum('za').where(mask)
+poly = masked.polyfit(dim="wavelength", deg=2, skipna=True)
+cont = xr.polyval(da["wavelength"], poly.polyfit_coefficients)
+#%%
+norm = 1 - da/cont
+# %%
+da.sum('za').plot()
+cont.plot()
+plt.figure()
+norm.mean('za').plot()
+# %%
+signal = norm.mean('za')
+peaks,_ = find_peaks(signal, height = 0.9, distance = 100)
+# signal.plot()
+# plt.scatter(norm.wavelength.values[peaks], norm.mean('za').values[peaks], color = 'r')
+# %%
+def Gaussian(x, a,xo, sigma,r):
+    return a* np.exp(-(x-xo)**2/(2*sigma**2)) + r
+
+
+
+
+scores = []
+windowsize = 0.3
+for p in peaks:
+    testda = norm.sel(wavelength = slice(signal.wavelength.values[p] - windowsize, signal.wavelength.values[p] + windowsize))
+    fitda = testda.curvefit(coords='wavelength', func=Gaussian, skipna=True,
+                        p0={'a': np.abs(np.abs(testda.max(skipna=True)) - np.abs(testda.min(skipna=True))), 
+                            'xo': signal.wavelength.values[p], 
+                            'sigma': windowsize/2,
+                            'r': 0}, errors='ignore')
+    fitda = fitda.mean('za') #get the mean curve fit across all zaslices
+    # plt.figure()
+    # testda.mean('za').plot()
+    # calcda = Gaussian(testda.wavelength.values, *fitda.curvefit_coefficients.values)
+    plt.scatter(testda.wavelength.values, calcda, color = 'r', s = .5)
+    score = rsquared_for_gaussian(testda.wavelength.values, testda.values, fitda.curvefit_coefficients.values)
+    scores.append(score)
+
+# %%
+central_wl = da.wavelength.values[peaks[np.argmax(scores)]]
+
+# %%
+windowsize = 0.25
+wlslice = slice(central_wl - windowsize, central_wl + windowsize)
+norm = norm.sel(wavelength = wlslice)
+fitted = norm.curvefit(coords='wavelength', func=Gaussian, skipna=True,
+                      p0={'a': np.abs(np.abs(norm.max(skipna=True)) - np.abs(norm.min(skipna=True))), 
+                          'xo': central_wl, 
+                          'sigma': windowsize/2,
+                          'r': 0}, errors='ignore')
+# %%
+da.plot()
+fitted.curvefit_coefficients.sel(param = 'xo').plot(y = 'za')
+# %%
+norm.isel(za = 10).plot()
+x = norm.wavelength.values
+popt = fitted.curvefit_coefficients.isel(za = 10)
+plt.scatter(x, Gaussian(x, *popt.values), s = .5, color = 'r')
 # %%

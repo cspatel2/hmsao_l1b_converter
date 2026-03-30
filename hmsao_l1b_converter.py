@@ -2,19 +2,22 @@
 # perform secondary straightening on a l1a dataset based on a provided line profile
 # %%
 import argparse
-from ast import arg
 from datetime import datetime
-from matplotlib.style import available
+from tkinter import NO
 import numpy as np
 import xarray as xr
-from skimage import transform
 from pathlib import Path
 from secondary_straightening import secondary_straightening
-from matplotlib import pyplot as plt
 from tqdm import tqdm
 from dataclasses import dataclass
 from scipy.ndimage import gaussian_filter1d
+import os
+import sys
+from matplotlib import pyplot as plt
 
+LOCALPATH = os.path.dirname(os.path.realpath(__file__))
+sys.path.append(os.path.join(LOCALPATH))
+from l1b_helpers import apply_flatfield_correction
 
 #%%
 @dataclass
@@ -24,12 +27,15 @@ class L1BConfig:
         rootdir (str|Path): Root directory containing L1A files.
         destdir (str|Path): Destination directory for L1B files. If not provided, will create a 'l1b' directory parallel to the rootdir.
         windows (list[str]): List of windows to process. If not provided, will process all windows found in the calibration map directory.
+        dates (list[str]): List of dates to process. If not provided, will process all dates found in the rootdir.
+        flatdir (str|Path): Path to directory containing flat field files to apply flat field correction to the data before performing secondary straightening. This should be a .nc file containing a variable named 'countrate' with dimensions that match the data (e.g. za, wavelength). If not provided, no flat field correction will be applied.
         line_profile_dir (str|Path): Directory containing line profile (.nc) files. To generate them, use the line profile generator in the secondary_straightening module.
     """
     rootdir: str | Path
     destdir: str | Path
     windows: list[str]
     dates: list[str]
+    flatdir: str | Path
     line_profile_dir: str | Path
 
 def main(config: L1BConfig):
@@ -43,6 +49,7 @@ def main(config: L1BConfig):
                 - destdir (str|Path): Destination directory for L1B files.
                 - windows (list[str]): List of windows to process. if windows is [''] or '', will process all windows found in the calibration map directory.
                 - dates (list[str]): List of dates to process. if dates is [''] or '', will process all dates found in the rootdir.
+                - flatdir (str|Path): Path to directory containing flat field files to apply flat field correction to the data before performing secondary straightening. This should be a .nc file containing a variable named 'countrate' with dimensions that match the data (e.g. za, wavelength). If not provided, no flat field correction will be applied.
                 - line_profile_dir (str|Path): Directory containing line profile (.nc) files. To generate them, use the line profile generator in the secondary_straightening module.
 
     Raises:
@@ -70,6 +77,19 @@ def main(config: L1BConfig):
     if config.dates == '': # process all files
         config.dates = ['']
 
+    if config.flatdir == '' or config.flatdir is not None: #check if flat field correction is needed
+        config.flatdir = Path(config.flatdir).expanduser()
+        if config.flatdir.is_file():
+            raise ValueError(f"Provided flatdir {config.flatdir} is a file. Please provide a directory containing flat field .nc files with 'flat' in the filename.")
+        if config.flatdir.is_dir() and config.flatdir.parts[-1] != 'l1a':
+            config.flatdir = config.flatdir / 'l1a'
+        flat_fns = list(config.flatdir.glob('*flat*.nc'))
+        if len(flat_fns) < 1:
+            raise FileNotFoundError(f"No flat field files found in {config.flatdir}. Please provide a valid directory containing flat field .nc files with 'flat' in the filename.")
+    else:
+        print("No flat field directory provided. Skipping flat field correction.")
+    print(f"config.flatdir: {config.flatdir}")
+    
     # check line profile dir
     if isinstance(config.line_profile_dir, str):
         config.line_profile_dir = Path(config.line_profile_dir)
@@ -84,10 +104,22 @@ def main(config: L1BConfig):
     if config.windows == [''] or config.windows == '':
         valid_windows = available_windows
     else: valid_windows = list(set(config.windows) & set(available_windows))
+    # print(f"Available windows in line profile directory: {available_windows}")
+    print(f"Windows to be processed: {valid_windows}")
 
-    for win in valid_windows:
+    for win in tqdm(valid_windows):
         print(f"Processing window: {win}")
 
+        #get flat field
+        flatds,darkds = None, None
+        if config.flatdir is not None:
+            flat_fns = np.sort(list(config.flatdir.glob(f'*flat*{win}*.nc')))[0] #type: ignore
+            flatds = xr.open_dataset(flat_fns)
+            #get dark to correct flat field if dark corrected data is being processed
+            dark_fns = np.sort(list(config.flatdir.glob(f'*dark*{win}*.nc')))[0] #type: ignore
+            darkds = xr.open_dataset(dark_fns)
+        # print(f"flatds: {flatds}, \n\n darkds: {darkds}")
+        
         #get line profile
         lp_file = list(config.line_profile_dir.glob(f'*line_profile_{win}*.nc'))
         if len(lp_file) > 1:
@@ -97,11 +129,6 @@ def main(config: L1BConfig):
         lprof = xr.open_dataset(lp_file)
         lprof['line_profile'] = lprof['line_profile'] = (lprof.dims, gaussian_filter1d(lprof.line_profile.values, sigma=5)) #smooth line profile with gaussian filter to avoid overfitting to noise in the line profile
 
-        
-        print(f"Processing window: {win}")
-
-
-        
         for date in config.dates:
             #get L1A data files
             fns = list(config.rootdir.glob(f'*/*{date}*{win}*.nc'))
@@ -117,11 +144,23 @@ def main(config: L1BConfig):
             else:
                 raise ValueError("no known data variable found")
             
+            #check if data is dark corrected and do that for flatfield
+            if flatds is not None and darkds is not None:
+                if ' not ' not in ds.Note.lower(): # check if ds is dark corrected.
+                    flatds['countrate'] = flatds['countrate'] - darkds['countrate']
+            
             for fn in tqdm(fns, desc=f"window {win} | date {date}:"):
                 # print(f"Processing file: {fn.name}...", end='', flush=True)
                 ds = xr.open_dataset(fn)
                 if id == 'intensity':
                     ds = ds.rename({'intensity': 'countrate'})
+                
+                #apply flat field correction
+                if flatds is not None:
+                    da = ds['countrate']
+                    da = apply_flatfield_correction(da, flatds['countrate'], win=win, in_place=True, PLOT=False)
+                    ds['countrate'] = da
+
                 ss = secondary_straightening(ds, lprof)
                 ss['countrate'] = ss['countrate'].clip(min=0)
                 all_vars = list(ds.coords) + list(ds.keys())
@@ -134,6 +173,10 @@ def main(config: L1BConfig):
                 outfn_dir = config.destdir / str(fn.parent).split('/l1a/')[-1]  # get the subdirs after l1a and replicate them in destdir
                 outfn_dir.mkdir(parents=True, exist_ok=True) 
                 outfn = outfn_dir/ fn.name.replace('l1a', 'l1b') #use same name but replace l1a with l1b
+                try:
+                    ss.to_netcdf(outfn, encoding=encoding)
+                except Exception as e:
+                    outfn.unlink(missing_ok=True) #delete file if it was created but an error occurred during saving to avoid leaving corrupted files
                 ss.to_netcdf(outfn, encoding=encoding)
                 # print('\tDone.', flush=True)
 
@@ -144,6 +187,7 @@ if __name__ == "__main__":
     parser.add_argument('--destdir', type=str, default='', help="Destination directory for L1B files. If not provided, will create a 'l1b' directory parallel to the rootdir.")
     parser.add_argument('--windows', nargs='+', default=[''], help="List of windows to process. If not provided, will process all windows found in the calibration map directory.")
     parser.add_argument('--dates', nargs='+', default=[''], help="List of dates to process. If not provided, will process all dates found in the rootdir.")
+    parser.add_argument('--flatdir', type=str, default='', help="Path to directory containing flat field files to apply flat field correction to the data before performing secondary straightening. This should be a .nc file containing a variable named 'countrate' with dimensions that match the data (e.g. za, wavelength). If not provided, no flat field correction will be applied.")
     parser.add_argument('--line_profile_dir', type=str, required=True, help="Directory containing line profile (.nc) files. To generate them, use the line profile generator in the secondary_straightening module.")   
 
     args = parser.parse_args()
@@ -152,15 +196,8 @@ if __name__ == "__main__":
         destdir=args.destdir,
         windows=args.windows,
         dates=args.dates,
+        flatdir=args.flatdir,
         line_profile_dir=args.line_profile_dir
-    )
+    ) #create config dataclass instance from parsed arguments
     main(config)
     
-
-
-
-        
-        
-        
-
-# %%
