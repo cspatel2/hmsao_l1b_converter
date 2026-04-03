@@ -102,6 +102,7 @@ def determine_wl_to_track(
     da = Normalize(da, invert_signal=invert_signal)
     # find peaks in the signal and return the corresponding wavelengths
     peaks, _ = find_peaks(da.values, height=0.4, distance=35)
+
     # test the "Guassian-ness" of each peak
     scores, sigmas = [], []
     windowsize = 0.25
@@ -219,7 +220,13 @@ def generate_line_profile(
     da = da.sel(wavelength=wlslice)
 
     # Find the wavelength of the spectral line to track
-    central_wl, _ = determine_wl_to_track(da, func=func, invert_signal=invert_signal, PLOT=PLOT)
+    try:
+        central_wl, _ = determine_wl_to_track(da, func=func, invert_signal=invert_signal, PLOT=PLOT)
+    except:
+        wlslice = slice(da.wavelength.min() + 3, da.wavelength.max() - 1.5)
+        da = da.sel(wavelength=wlslice)
+        central_wl, _ = determine_wl_to_track(da, func=func, invert_signal=invert_signal, PLOT=PLOT)
+
     # Estimate the line profile by curve fitting using the central wavelength determined above
     curvefit = estimate_line_profile_curvefit(da, central_wl, wl_window_size_nm, func=func, invert_signal=invert_signal, plot_idx=plot_za_idx)
 
