@@ -282,14 +282,20 @@ def get_za_boundaries(da: xr.DataArray, level_idx: tuple[int, int] = (1,1))-> tu
 
     return top_val, bot_val
 
-def apply_flatfield_correction(da: xr.DataArray, flatda: xr.DataArray, win: str,in_place:bool = True,  PLOT : bool = False)-> xr.DataArray:
+def apply_flatfield_correction(da: xr.DataArray, flatda: xr.DataArray, win: str,levelidx: tuple[int, int]|None = None,in_place:bool = True,  PLOT : bool = False)-> xr.DataArray:
 
     input_da = da.copy()
 
-    #estimate za boundaries using contour levels
-    if win in ['6563', '4861']: level_idx = (3,1)
-    else: level_idx = (1,10)    
-    za_top, za_bot = get_za_boundaries(flatda, level_idx=level_idx)
+    if levelidx is not None:
+        level_idx = levelidx
+        za_top, za_bot = get_za_boundaries(flatda, level_idx=level_idx)
+    else:
+        if win in ['6563','4861']: # if user has specified contour levels to use for za boundary estimation, use those.
+            za_top, za_bot = 20,-20
+        else: # otherwise, automatically estimate za boundaries using contour levels.
+            level_idx = (1,10)
+            za_top, za_bot = get_za_boundaries(flatda, level_idx=level_idx)
+    
     zaslice = slice(za_bot, za_top)
 
     #normalization factor for flat
