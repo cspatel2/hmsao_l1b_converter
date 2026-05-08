@@ -1,9 +1,9 @@
 #%%
 #this file creates the line profile of a chosen emission line from a given l1a file, to use as input to the secondary straightening process
 import argparse
-from curses import window
 from dataclasses import dataclass
 from collections.abc import Callable
+from matplotlib.pylab import False_
 import xarray as xr
 import numpy as np
 from pathlib import Path
@@ -101,7 +101,7 @@ def determine_wl_to_track(
     # nnormalize
     da = Normalize(da, invert_signal=invert_signal)
     # find peaks in the signal and return the corresponding wavelengths
-    peaks, _ = find_peaks(da.values, height=0.4, distance=35)
+    peaks, _ = find_peaks(da.values, height=0.55, distance=55)
 
     # test the "Guassian-ness" of each peak
     scores, sigmas = [], []
@@ -130,6 +130,9 @@ def determine_wl_to_track(
         scores.append(score)
     #use scores to determine the best peak and return the corresponding wavelength
     best_peak_idx = np.argmax(scores)
+    if len(scores) > 2 and (best_peak_idx == 0 or best_peak_idx == len(peaks)-1):
+     #take the next best score if the best score is for the first or last peak, since those are more likely to be edge effects and have unreliable fits
+        best_peak_idx = np.argsort(scores)[-2]  # Select the second-best peak
     best_peak = da.wavelength.values[peaks[best_peak_idx]]
     best_windowsize = sigmas[best_peak_idx]
     if PLOT:
@@ -141,7 +144,6 @@ def determine_wl_to_track(
         )
         plt.legend(loc="best")
     return best_peak, best_windowsize
-
 
 def estimate_line_profile_curvefit(da: xr.DataArray, central_wl: float, windowsize: float, func: Callable, invert_signal: bool = False, plot_idx: int | None = None) -> xr.Dataset:
     """ Estimate the line profile by fitting a curve (e.g., Gaussian) to the signal around the central wavelength for each za.
@@ -188,7 +190,7 @@ def generate_line_profile(
     win: str,
     func: Callable = Gaussian,
     invert_signal: bool = False,
-    zaslice: slice = slice(-17, 15),
+    zaslice: slice = slice(-15, 15),
     wlslice: slice | None = None,
     wl_window_size_nm: float = 0.15,
     plot_za_idx: int | None = None,
@@ -212,21 +214,21 @@ def generate_line_profile(
         xr.Dataset: _description_
     """    
     if "tstamp" in da.dims:
-        da = da.mean("tstamp")
+        da = da.isel(tstamp=slice(0, 25)).mean("tstamp")
     if "za" in da.dims:
         da = da.sel(za=zaslice)
     if wlslice is None:
-        wlslice = slice(da.wavelength.min() + 1.5, da.wavelength.max() - 0.9)
+        if win =='7774':
+            wlmin = da.wavelength.min() + 2
+            wlmax = da.wavelength.max() - 0.9
+        else:
+            wlmin = int(win)/10 - 1
+            wlmax = int(win)/10 + 1
+        wlslice = slice(wlmin, wlmax)
     da = da.sel(wavelength=wlslice)
 
-    # Find the wavelength of the spectral line to track
-    try:
-        central_wl, _ = determine_wl_to_track(da, func=func, invert_signal=invert_signal, PLOT=PLOT)
-    except:
-        wlslice = slice(da.wavelength.min() + 3, da.wavelength.max() - 1.5)
-        da = da.sel(wavelength=wlslice)
-        central_wl, _ = determine_wl_to_track(da, func=func, invert_signal=invert_signal, PLOT=PLOT)
-
+     # Find the wavelength of the spectral line to track
+    central_wl, _ = determine_wl_to_track(da, func=func, invert_signal=invert_signal, PLOT=PLOT)
     # Estimate the line profile by curve fitting using the central wavelength determined above
     curvefit = estimate_line_profile_curvefit(da, central_wl, wl_window_size_nm, func=func, invert_signal=invert_signal, plot_idx=plot_za_idx)
 
@@ -315,18 +317,18 @@ def main(config: LineProfileConfig):
         },
         'adsorption': {
             'invert_signal': True, #daytime
-            'fidx': 4,
+            'fidx': 2,
         }
     }
 
     PARAMS = {
         '5577': {
             'type': 'emission',
-            'windowsize': 0.15,
+            'windowsize': 0.2,
         },
         '6300': {
             'type': 'emission',
-            'windowsize': 0.15,
+            'windowsize': 0.2,
         },
         '6563': {
             'type': 'adsorption',
@@ -366,18 +368,17 @@ def main(config: LineProfileConfig):
         flatds = xr.open_dataset(flatfn[0])
 
         #apply flat field correction
-        ds['countrate'] = apply_flatfield_correction(ds['countrate'], flatds['countrate'], win=win, in_place=True, PLOT=False)
+        ds['countrate'] = apply_flatfield_correction(ds['countrate'], flatds['countrate'], win=win, in_place=False, PLOT=False)
 
         #generate line profile
         lpds = generate_line_profile(
             da=ds['countrate'],
             win=win,
             func=Gaussian,
+            zaslice=slice(-21, 15),
             invert_signal=invert_signal,
-            zaslice=slice(-17, 15),
-            wlslice=None,
             wl_window_size_nm=windowsize,
-            plot_za_idx=0,
+            plot_za_idx=100,
             PLOT=False,
         )
 

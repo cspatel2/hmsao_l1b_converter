@@ -13,6 +13,7 @@ from scipy.ndimage import gaussian_filter, gaussian_filter1d
 from scipy.optimize import curve_fit
 from scipy.signal import find_peaks
 
+from datetime import datetime, timezone
 # %%
 method = ''
 
@@ -101,11 +102,16 @@ if method == 'COM':
     testds.line_profile.plot(y = 'za')
 # %%
 #find peaks method
-fns = list(Path('~/locsststor/proc/hmsao-v1/l1a').expanduser().glob('**/*.nc'))
-fns.sort()
 win = '5577'
+fns = list(Path('~/local_data/hmsao-v1/l1a').expanduser().glob(f'**/*{win}*.nc'))
+fns.sort()
+
 ds = xr.open_dataset(fns[0])
-da = ds.countrate.sum('tstamp', skipna = True).clip(min=0)
+start = datetime.fromtimestamp(float(ds.tstamp.min().values), tz=timezone.utc ).isoformat()
+end = datetime.fromtimestamp(float(ds.tstamp.max().values), tz=timezone.utc ).isoformat()
+print(f"Data from {start} to {end}")
+#%%
+da = ds.countrate.isel(tstamp = slice(0,25)).sum('tstamp', skipna = True).clip(min=0)
 
 # %%
 ida = da.copy()
@@ -170,7 +176,7 @@ wlslice = slice(int(win)/10 - 0.1, int(win)/10 + 0.06)
 # wlslice = slice(int(win)/10 - 0.1, int(win)/10 + 0.1)
 #%%
 #########################################################################################
-p = Path('~/locsststor/proc/hmsao-v1/l1a').expanduser()
+p = Path('~/local_data/hmsao-v1/l1a').expanduser()
 win = '6563'
 fns = list(p.glob(f'**/*{win}*.nc'))
 fns.sort()
@@ -407,10 +413,10 @@ plt.axvline(winner, color = 'g', ls = '--')
 # %%
 #########################################################
 win = '6563'
-p = Path('~/locsststor/proc/hmsao-v1/l1a').expanduser()
+p = Path('~/local_data/hmsao-v1/l1a').expanduser()
 fns = list(p.glob(f'**/*{win}*.nc'))
 fns.sort()
-ds = xr.open_dataset(fns[3+7])
+ds = xr.open_dataset(fns[2])
 # %%
 wlslice = slice(ds.wavelength.min()+1.1, ds.wavelength.max()-.9)
 da =ds.countrate.sel(za = slice(-17,15), wavelength = wlslice).isel(tstamp = 50)
@@ -448,16 +454,23 @@ def Gaussian(x, a,xo, sigma,r):
 scores = []
 windowsize = 0.3
 for p in peaks:
-    testda = norm.sel(wavelength = slice(signal.wavelength.values[p] - windowsize, signal.wavelength.values[p] + windowsize))
-    fitda = testda.curvefit(coords='wavelength', func=Gaussian, skipna=True,
+    try:
+        testda = norm.sel(wavelength = slice(signal.wavelength.values[p] - windowsize, signal.wavelength.values[p] + windowsize))
+
+        fitda = testda.curvefit(coords='wavelength', func=Gaussian, skipna=True,
                         p0={'a': np.abs(np.abs(testda.max(skipna=True)) - np.abs(testda.min(skipna=True))), 
                             'xo': signal.wavelength.values[p], 
                             'sigma': windowsize/2,
                             'r': 0}, errors='ignore')
+    except Exception as e:
+        print(f"Error fitting peak at wavelength {signal.wavelength.values[p]}: {e}")
+        scores.append(-np.inf)  # Assign a very low score if fitting fails
+        continue
+
     fitda = fitda.mean('za') #get the mean curve fit across all zaslices
     # plt.figure()
     # testda.mean('za').plot()
-    # calcda = Gaussian(testda.wavelength.values, *fitda.curvefit_coefficients.values)
+    calcda = Gaussian(testda.wavelength.values, *fitda.curvefit_coefficients.values)
     plt.scatter(testda.wavelength.values, calcda, color = 'r', s = .5)
     score = rsquared_for_gaussian(testda.wavelength.values, testda.values, fitda.curvefit_coefficients.values)
     scores.append(score)
