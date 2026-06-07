@@ -298,11 +298,11 @@ def apply_flatfield_correction(da: xr.DataArray, flatda: xr.DataArray, win: str,
     
     zaslice = slice(za_bot, za_top)
 
-    #normalization factor for flat
-    med = flatda.sel(za=zaslice).median(skipna=True).values 
+    # normalization factor for flat
+    med = flatda.sel(za=zaslice).max(skipna=True).values 
 
     
-    if not in_place:# keep same shape as input da.
+    if not in_place: # keep same shape as input da.
         mask = (da.za >= za_bot) & (da.za <= za_top)
         #nan for outside of zabounds.
         flatda = flatda.where(mask, np.nan, drop=False)
@@ -311,7 +311,7 @@ def apply_flatfield_correction(da: xr.DataArray, flatda: xr.DataArray, win: str,
         flatda = flatda.sel(za=zaslice)
         da = da.sel(za=zaslice)
     #apply flat field correction
-    da = da / (flatda / med)
+    da.data /= (flatda / med).data
 
     if PLOT:
         tidx = 0

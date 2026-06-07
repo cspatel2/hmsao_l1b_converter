@@ -3,6 +3,7 @@
 import argparse
 from dataclasses import dataclass
 from collections.abc import Callable
+import hdf5plugin
 from matplotlib.pylab import False_
 import xarray as xr
 import numpy as np
@@ -15,6 +16,8 @@ from datetime import datetime
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from l1b_helpers import apply_flatfield_correction
+
+xr.set_options(netcdf_engine_order=["h5netcdf", "netcdf4", "scipy"])
 #%%
 
 def Gaussian(x: np.ndarray, a: float, xo: float, sigma: float, r: float) -> np.ndarray:
@@ -63,12 +66,16 @@ def Normalize(da: xr.DataArray, dim: str | None = None, invert_signal: bool = Fa
     """
     if dim is None:
         # normalize the entire array globally
-        da = da - da.min()
-        da = da / da.max()
+        vmin = da.min()
+        vmax = da.max()
+        da = da - vmin
+        da = da / (vmax - vmin)
     else:
         # normalize each slice along `dim` independently
-        da = da - da.min(dim=dim)
-        da = da / da.max(dim=dim)
+        vmin = da.min(dim=dim)
+        vmax = da.max(dim=dim)
+        da = da - vmin
+        da = da / (vmax - vmin)
     if invert_signal:
         da = 1 - da
     return da
@@ -96,16 +103,16 @@ def determine_wl_to_track(
     if "tstamp" in da.dims:
         da = da.mean("tstamp")
     if "za" in da.dims:
-        da = da.sum("za")
+        da = da.mean("za")
 
     # nnormalize
     da = Normalize(da, invert_signal=invert_signal)
     # find peaks in the signal and return the corresponding wavelengths
     peaks, _ = find_peaks(da.values, height=0.55, distance=55)
-
     # test the "Guassian-ness" of each peak
     scores, sigmas = [], []
     windowsize = 0.25
+    print (len(peaks), "peaks found for line profile generation.")
     for p in peaks:
         tda = da.sel(
             wavelength=slice(
@@ -214,7 +221,7 @@ def generate_line_profile(
         xr.Dataset: _description_
     """    
     if "tstamp" in da.dims:
-        da = da.isel(tstamp=slice(0, 25)).mean("tstamp")
+            da = da.isel(tstamp=slice(0, 10)).mean("tstamp")
     if "za" in da.dims:
         da = da.sel(za=zaslice)
     if wlslice is None:
@@ -222,12 +229,12 @@ def generate_line_profile(
             wlmin = da.wavelength.min() + 2
             wlmax = da.wavelength.max() - 0.9
         else:
-            wlmin = int(win)/10 - 1
-            wlmax = int(win)/10 + 1
+            wlmin = int(win)/10 - .5
+            wlmax = int(win)/10 + .5
         wlslice = slice(wlmin, wlmax)
     da = da.sel(wavelength=wlslice)
 
-     # Find the wavelength of the spectral line to track
+    # Find the wavelength of the spectral line to track
     central_wl, _ = determine_wl_to_track(da, func=func, invert_signal=invert_signal, PLOT=PLOT)
     # Estimate the line profile by curve fitting using the central wavelength determined above
     curvefit = estimate_line_profile_curvefit(da, central_wl, wl_window_size_nm, func=func, invert_signal=invert_signal, plot_idx=plot_za_idx)
@@ -251,13 +258,11 @@ def generate_line_profile(
     norm_fitted_line_cf = fitted_line_cf - normalize_to_wl
     #create dataset
     norm_fitted_line_cf.name = "line_profile"
-    norm_fitted_line_cf = norm_fitted_line_cf.drop_vars("param")
     lpds = norm_fitted_line_cf.to_dataset()
 
     lpds.attrs["description"] = (
         f"Line profile (deviation from wavelength at mx intensity for each za) for window {win}."
     )
-    lpds["line_profile"].attrs["long_name"] = f"Normalized Line profile"
     lpds["line_profile"].attrs["units"] = "nm"
     lpds["za"].attrs = da.za.attrs
     # norm_fitted_line_cf.attrs['source_file'] = str(fn)
@@ -317,7 +322,7 @@ def main(config: LineProfileConfig):
         },
         'adsorption': {
             'invert_signal': True, #daytime
-            'fidx': 2,
+            'fidx': 3,
         }
     }
 
@@ -372,20 +377,19 @@ def main(config: LineProfileConfig):
 
         #generate line profile
         lpds = generate_line_profile(
-            da=ds['countrate'],
+            da=ds.countrate ,
             win=win,
-            func=Gaussian,
-            zaslice=slice(-21, 15),
+            # func=Gaussian,
             invert_signal=invert_signal,
             wl_window_size_nm=windowsize,
-            plot_za_idx=100,
+            plot_za_idx=400,
             PLOT=False,
         )
 
         lpds.attrs['source_file'] = str(fns[fidx].name)
         lpds.attrs['window'] = win
 
-        encoding = {var: {'zlib': True} for var in (*lpds.data_vars.keys(), *lpds.coords.keys())}
+        encoding = {var: hdf5plugin.Zstd(clevel=3) for var in (*lpds.data_vars.keys(), *lpds.coords.keys())}
 
         #save line profile
         outfn = config.destdir / f'line_profile_{win}.nc'

@@ -4,6 +4,7 @@
 import argparse
 from datetime import datetime
 from tkinter import NO
+import hdf5plugin
 import numpy as np
 import xarray as xr
 from pathlib import Path
@@ -14,6 +15,8 @@ from scipy.ndimage import gaussian_filter1d
 import os
 import sys
 from matplotlib import pyplot as plt
+
+xr.set_options(netcdf_engine_order=["h5netcdf", "netcdf4", "scipy"])
 
 LOCALPATH = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(LOCALPATH))
@@ -157,17 +160,21 @@ def main(config: L1BConfig):
                 #apply flat field correction
                 if flatds is not None:
                     da = ds['countrate']
-                    da = apply_flatfield_correction(da, flatds['countrate'], win=win, in_place=True, PLOT=False)
+                    da = apply_flatfield_correction(da, flatds['countrate'], win=win, in_place=True, PLOT=False) # apply flat field correction to data, currently DOES NOT use countrate error for flat fields
                     ds['countrate'] = da
+                    da = ds['noise']
+                    da = apply_flatfield_correction(da, flatds['countrate'], win=win, in_place=True, PLOT=False) # apply flat field correction to data, currently DOES NOT use countrate error for flat fields
+                    ds['noise'] = da
 
-                ss = secondary_straightening(ds, lprof)
+                ss = secondary_straightening(ds, lprof) # now secondary straightens the noise
                 ss['countrate'] = ss['countrate'].clip(min=0)
+                ss['noise'] = ss['noise'].clip(min=0)
                 all_vars = list(ds.coords) + list(ds.keys())
                 for var in all_vars:
                     ss[var].attrs = ds[var].attrs
                 ss.attrs['DataProcessingLevel'] = 'L1b - Secondary Straightened'
                 ss.attrs['FileCreationDate'] = datetime.now().strftime("%m/%d/%Y, %H:%M:%S EDT")
-                encoding = {var: {'zlib': True} for var in (*ds.data_vars.keys(), *ds.coords.keys())}
+                encoding = {var: hdf5plugin.Zstd(clevel=3) for var in (*ds.data_vars.keys(), *ds.coords.keys())}
                 # print('\tsaving...', end='', flush=True)
                 outfn_dir = config.destdir / str(fn.parent).split('/l1a/')[-1]  # get the subdirs after l1a and replicate them in destdir
                 outfn_dir.mkdir(parents=True, exist_ok=True) 

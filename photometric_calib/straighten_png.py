@@ -18,6 +18,8 @@ from astropy.io import fits as fits
 import matplotlib as mpl
 from skimage import transform
 from tqdm import tqdm
+
+xr.set_options(netcdf_engine_order=["h5netcdf", "netcdf4", "scipy"])
 usetex = False
 
 if not usetex:
@@ -351,7 +353,7 @@ def main(fnames: List[str], modelpath: str, prefix: str, darkds: str = None,READ
         ds['noise'].attrs['unit'] = 'ADU/s'
         ds['noise'].attrs['long_name'] = 'Noise'
         ds['noise'].attrs['eqn'] = r'Noise is given by sqrt{RN^2 + Counts}/exp'
-        encoding = {var: {'zlib': True}
+        encoding = {var: hdf5plugin.Zstd(clevel=3)
                     for var in (*ds.data_vars.keys(), *ds.coords.keys())}
         ds.to_netcdf(sub_outfpath, encoding=encoding)
 
